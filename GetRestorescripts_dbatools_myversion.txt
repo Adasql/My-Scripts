@@ -1,0 +1,107 @@
+Set-DbatoolsInsecureConnection -SessionOnly
+
+# Define variables
+$SqlInstance = "ukprephcdbao"
+
+$DatabaseList = @(
+    "TandemStaging_HIDAC",
+    "Tandem_HIDAC",
+    "InformData_HIDAC",
+    "Postbox_HIDAC",
+    "Rapport_HIDAC",
+    "TandemStaging_Synd",
+    "Tandem_Synd",
+    "InformData_Synd",
+    "Postbox_Synd",
+    "Rapport_Synd"
+)
+
+$BackupRoot = "\\HGMSNAPVLON1\SQLBackups_prod\ukprdphcdbyx"
+$RestoreDate = "20260821"
+
+# Restore locations
+$DataPath = "R:\MSSQL\Data"
+$LogPath  = "N:\MSSQL\Log"
+
+if (-not $BackupRoot) {
+    Write-Error "BackupRoot variable is not set."
+    return
+}
+
+foreach ($db in $DatabaseList) {
+
+    if ([string]::IsNullOrWhite) {
+        Write-Warning "Database name is empty. Skipping."
+        continue
+    }
+
+    # Build path to FULL backup folder
+    $BackupPath = Join-Path -Path $BackupRoot -ChildPath "$db\FULL"
+
+    if (-not (Test-Path $BackupPath)) {
+        Write-Warning "Backup path $BackupPath does not exist. Skipping $db."
+        continue
+    }
+
+    # Find backup file
+    $Pattern = "*_${db}_FULL_${RestoreDate}_*.bak"
+    $Backups = Get-ChildItem -Path $BackupPath -Filter $Pattern | Sort-Object LastWriteTime -Descending
+
+    if ($Backups.Count -eq 0) {
+        Write-Warning "No backups found for $db on $RestoreDate in $BackupPath"
+        continue
+    }
+
+    # Use newest matching backup
+    $BackupFile = $Backups[0].FullName
+
+    Write-Host "Generating restore script for $db"
+    Write-Host "Backup File: $BackupFile"
+
+    # Generate restore script with file relocation
+    $RestoreScript = Restore-DbaDatabase `
+        -SqlInstance $SqlInstance `
+        -Database $db `
+        -Path $BackupFile `
+        -WithReplace `
+        -DestinationDataDirectory $DataPath `
+        -DestinationLogDirectory $LogPath `
+        -OutputScriptOnly
+
+    # Force users out and set SINGLE_USER
+    $PreRestore = @"
+USE [master]
+GO
+
+IF DB_ID('$db') IS NOT NULL
+BEGIN
+    ALTER DATABASE [$db] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+END
+GO
+
+"@
+
+    # Return to MULTI_USER after restore
+    $PostRestore = @"
+
+GO
+
+IF DB_ID('$db') IS NOT NULL
+BEGIN
+    ALTER DATABASE [$db] SET MULTI_USER;
+END
+GO
+"@
+
+    # Combine scripts
+    $FullScript = $PreRestore +
+                  ($RestoreScript -join "`r`n") +
+                  $PostRestore
+
+    # Save script
+    $OutputFile = Join-Path $BackupRoot "$db-RestoreScript.sql"
+
+    $FullScript | Out-File -FilePath $OutputFile -Encoding UTF8
+
+    Write-Host "Restore script saved to $OutputFile" -ForegroundColor Green
+}

@@ -1,0 +1,42 @@
+Set-DbatoolsInsecureConnection -SessionOnly
+# Define variables
+$SqlInstance = "UKPRDPHCDBYX"
+$DatabaseList = @("HamiltonMI_HIDAC","HamiltonMI_HIDAC_TEMP","InformData_HIDAC","Postbox_HIDAC","Rapport_HIDAC","Tandem_HIDAC","TandemStaging_HIDAC") # List your databases here
+$BackupRoot = "\\HGMSNAPVLON1\SQLBackups_prod\ukprdphcdbyx" # Path where your backup files are stored
+$RestoreDate = "20260416" # Date in yyyymmdd format to match your file names
+
+if (-not $BackupRoot) {
+    Write-Error "BackupRoot variable is not set."
+    return
+}
+
+foreach ($db in $DatabaseList) {
+    if (-not $db) {
+        Write-Warning "Database name is empty. Skipping."
+        continue
+    }
+
+    # Build the path to the FULL backup subfolder for this database
+    $BackupPath = Join-Path -Path $BackupRoot -ChildPath "$db\FULL"
+
+    if (-not (Test-Path $BackupPath)) {
+        Write-Warning "Backup path $BackupPath does not exist. Skipping $db."
+        continue
+    }
+
+    # Build the search pattern for the backup files
+    $Pattern = "*_${db}_FULL_${RestoreDate}_*.bak"
+    $Backups = Get-ChildItem -Path $BackupPath -Filter $Pattern
+
+    if ($Backups.Count -eq 0) {
+        Write-Warning "No backups found for $db on $RestoreDate in $BackupPath"
+        continue
+    }
+
+    # Generate the restore script using dbatools
+    $script = Restore-DbaDatabase -SqlInstance $SqlInstance -Database $db -Path $Backups.FullName -WithReplace -OutputScriptOnly
+
+    # Output or save the script for review
+    $script | Out-File -FilePath "$BackupRoot\$db-RestoreScript.sql"
+    Write-Host "Restore script for $db saved to $BackupRoot\$db-RestoreScript.sql"
+}
