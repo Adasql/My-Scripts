@@ -1,0 +1,7 @@
+get-smbshare | select name, path
+
+get-smbshareaccess -name F
+
+Grant-SmbShareAccess -name "F" -AccountName "zcloud\sadvcinjamsejs" -AccessRight read -Force
+
+icacls "F:\AHC_ETL\JAMS"

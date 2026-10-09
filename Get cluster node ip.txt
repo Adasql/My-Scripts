@@ -1,0 +1,2 @@
+Get-clusternode | Select Name | ForEach-Object {[PSCustomObject]@{Node =$_.Name 
+IPs = (Resolve-DnsName $_.Name).IPAddress}}
